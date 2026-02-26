@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
+import os
 
 #Configuração da página#
 st.set_page_config(
@@ -16,12 +17,54 @@ st.set_page_config(
 st.title("💰 Dashboard de Investimentos")
 st.markdown("---")
 
-#Conectar ao DuckDB#
+#Função para carregar dados (local ou secrets)#
 @st.cache_resource
 def get_connection():
-    return duckdb.connect('investimentos.db')
+    # Verifica se está rodando localmente (tem o arquivo .db)
+    if os.path.exists('investimentos.db'):
+        return duckdb.connect('investimentos.db')
+    else:
+        # Rodando no Streamlit Cloud - cria banco em memória e carrega dos secrets
+        conn = duckdb.connect(':memory:')
+        
+        # Carrega dados dos secrets
+        if "lancamentos_csv" in st.secrets and "categoria_tipo_csv" in st.secrets and "categoria_risco_csv" in st.secrets:
+            # Lê os CSVs dos secrets como strings e carrega no DuckDB
+            import io
+            
+            # Lancamentos
+            lancamentos_df = pd.read_csv(io.StringIO(st.secrets["lancamentos_csv"]))
+            conn.register('lancamentos_temp', lancamentos_df)
+            conn.execute("""
+                CREATE TABLE lancamentos AS 
+                SELECT 
+                    CAST(data AS DATE) as data,
+                    nome,
+                    tipo_transacao,
+                    instituicao,
+                    CAST(valor AS DOUBLE) as valor
+                FROM lancamentos_temp
+            """)
+            
+            # Categoria Tipo
+            categoria_tipo_df = pd.read_csv(io.StringIO(st.secrets["categoria_tipo_csv"]))
+            conn.register('categoria_tipo', categoria_tipo_df)
+            
+            # Categoria Risco
+            categoria_risco_df = pd.read_csv(io.StringIO(st.secrets["categoria_risco_csv"]))
+            conn.register('categoria_risco', categoria_risco_df)
+        else:
+            st.error("⚠️ Dados não encontrados! Configure os secrets no Streamlit Cloud.")
+            st.stop()
+        
+        return conn
 
-conn = get_connection()
+try:
+    conn = get_connection()
+except Exception as e:
+    st.error(f"Erro ao conectar aos dados: {e}")
+    st.info("💡 Se estiver rodando localmente, certifique-se de ter o arquivo investimentos.db na pasta do projeto.")
+    st.stop()
 
 #Query 1: Saldo total atual#
 @st.cache_data
@@ -199,4 +242,4 @@ df_display.columns = [
 st.dataframe(df_display, use_container_width=True, hide_index=True)
 
 st.markdown("---")
-st.caption("💡 Atualize seus dados mensalmente nos CSVs e o dashboard refletirá automaticamente as mudanças!")
+st.caption("💡 Atualize seus dados mensalmente e o dashboard refletirá automaticamente as mudanças!")
